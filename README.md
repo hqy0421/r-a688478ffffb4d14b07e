@@ -73,6 +73,42 @@ It also includes a debugging tool, run `java -cp ./target/tabula-1.0.5-jar-with-
 
 You can also integrate `tabula-java` with any JVM language. For Java examples, see the [`tests`](src/test/java/technology/tabula/) folder.
 
+### Wide-to-long (unpivot) output for fact tables
+
+Supplier PDFs often ship monthly data as a wide table:
+
+```
+门店,商品,销量 2025-01,销量 2025-02,销售额 2025-01
+S01,苹果,10,30,100.5
+```
+
+Pass `--unpivot` with an ordered list of dimension columns and an ordered list of
+metric names to melt such tables into one row per source record and month, sorted
+by month ascending, with a fixed header written once:
+
+```
+$ java -jar target/tabula-1.0.5-jar-with-dependencies.jar supplier.pdf -p all -l \
+    --unpivot --dimensions 门店,商品 --metrics 销量,销售额
+门店,商品,月份,销量,销售额
+S01,苹果,2025-01,10,100.5
+S01,苹果,2025-02,30,
+```
+
+Rules:
+
+- The first row of every extracted table is its header; headers on different pages
+  may reorder or omit columns, and columns are always matched by name.
+- Metric columns must be named `"<metric> <month>"` with the month as `YYYY-MM` or
+  `YYYY年M月` (ASCII, ideographic and non-breaking spaces are accepted separators).
+- Missing columns and empty cells are left blank. A month whose metrics are all
+  blank produces no row; `0` is a regular value and always kept.
+- Two columns carrying the same metric for the same month, an illegal month, a
+  missing dimension column or an unknown metric abort the run with an error that
+  identifies the page and (where applicable) the 1-based column number. No output
+  is written in that case.
+- `--unpivot` only applies to CSV output; without it, extraction and the default
+  CSV format are unchanged.
+
 JVM start-up time is a lot of the cost of the `tabula` command, so if you're trying to extract many tables from PDFs, you have a few options for speeding it up:
 
  - the -b option, which allows you to convert all pdfs in a given directory

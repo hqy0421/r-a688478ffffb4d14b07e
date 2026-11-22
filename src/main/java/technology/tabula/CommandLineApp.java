@@ -22,9 +22,11 @@ import technology.tabula.detectors.DetectionAlgorithm;
 import technology.tabula.detectors.NurminenDetectionAlgorithm;
 import technology.tabula.extractors.BasicExtractionAlgorithm;
 import technology.tabula.extractors.SpreadsheetExtractionAlgorithm;
+import technology.tabula.unpivot.UnpivotSpec;
 import technology.tabula.writers.CSVWriter;
 import technology.tabula.writers.JSONWriter;
 import technology.tabula.writers.TSVWriter;
+import technology.tabula.writers.UnpivotedCSVWriter;
 import technology.tabula.writers.Writer;
 
 
@@ -45,6 +47,7 @@ public class CommandLineApp {
     private OutputFormat outputFormat;
     private String password;
     private TableExtractor tableExtractor;
+    private UnpivotSpec unpivotSpec;
 
     public CommandLineApp(Appendable defaultOutput, CommandLine line) throws ParseException {
         this.defaultOutput = defaultOutput;
@@ -52,6 +55,7 @@ public class CommandLineApp {
         this.pages = CommandLineApp.whichPages(line);
         this.outputFormat = CommandLineApp.whichOutputFormat(line);
         this.tableExtractor = CommandLineApp.createExtractor(line);
+        this.unpivotSpec = CommandLineApp.whichUnpivotSpec(line, this.outputFormat);
 
         if (line.hasOption('s')) {
             this.password = line.getOptionValue('s');
@@ -253,6 +257,47 @@ public class CommandLineApp {
         return Utils.parsePagesOption(pagesOption);
     }
 
+    private static UnpivotSpec whichUnpivotSpec(CommandLine line, OutputFormat format)
+            throws ParseException {
+        boolean unpivot = line.hasOption("unpivot");
+        boolean hasDimensions = line.hasOption("dimensions");
+        boolean hasMetrics = line.hasOption("metrics");
+
+        if (!unpivot) {
+            if (hasDimensions || hasMetrics) {
+                throw new ParseException(
+                        "--dimensions and --metrics require --unpivot. Try --help for help");
+            }
+            return null;
+        }
+        if (format != OutputFormat.CSV) {
+            throw new ParseException("--unpivot is only available with CSV output");
+        }
+        if (!hasDimensions || !hasMetrics) {
+            throw new ParseException(
+                    "--unpivot requires both --dimensions and --metrics. Try --help for help");
+        }
+
+        List<String> dimensions = parseNameList(line.getOptionValue("dimensions"));
+        List<String> metrics = parseNameList(line.getOptionValue("metrics"));
+        if (dimensions.isEmpty() || metrics.isEmpty()) {
+            throw new ParseException(
+                    "--dimensions and --metrics must each list at least one name");
+        }
+        return new UnpivotSpec(dimensions, metrics);
+    }
+
+    private static List<String> parseNameList(String option) {
+        List<String> names = new ArrayList<>();
+        for (String name : option.split(",")) {
+            String trimmed = name.trim();
+            if (!trimmed.isEmpty()) {
+                names.add(trimmed);
+            }
+        }
+        return names;
+    }
+
     private static ExtractionMethod whichExtractionMethod(CommandLine line) {
         // -r/--spreadsheet [deprecated; use -l] or -l/--lattice
         if (line.hasOption('r') || line.hasOption('l')) {
@@ -364,6 +409,29 @@ public class CommandLineApp {
                 .hasArg()
                 .argName("PAGES")
                 .build());
+        o.addOption(Option.builder()
+                .longOpt("unpivot")
+                .desc("Melt wide monthly tables into long fact-table rows (CSV only). "
+                        + "The first row of each extracted table is the header. Dimension columns "
+                        + "are matched by name; metric columns must be named like "
+                        + "'销量 2025-01' or '销量 2025年1月'. Each source record becomes one row "
+                        + "per month, months ascending, with a fixed header written once. "
+                        + "Requires --dimensions and --metrics.")
+                .build());
+        o.addOption(Option.builder()
+                .longOpt("dimensions")
+                .desc("Comma separated dimension column names for --unpivot, in output order. "
+                        + "Example: --dimensions 门店,商品")
+                .hasArg()
+                .argName("DIMENSIONS")
+                .build());
+        o.addOption(Option.builder()
+                .longOpt("metrics")
+                .desc("Comma separated metric names for --unpivot, in output order. "
+                        + "Example: --metrics 销量,销售额")
+                .hasArg()
+                .argName("METRICS")
+                .build());
 
         return o;
     }
@@ -463,7 +531,8 @@ public class CommandLineApp {
         Writer writer = null;
         switch (outputFormat) {
             case CSV:
-                writer = new CSVWriter();
+                writer = unpivotSpec != null ?
+                        new UnpivotedCSVWriter(unpivotSpec) : new CSVWriter();
                 break;
             case JSON:
                 writer = new JSONWriter();
